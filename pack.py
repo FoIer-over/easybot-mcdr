@@ -4,7 +4,7 @@ if os.path.exists("__temp"):
     shutil.rmtree("__temp")
 os.makedirs("__temp", exist_ok=True)
 for file in os.listdir("."):
-    if file == "pack.py" or file == "__temp" or file.endswith(".mcdr"):
+    if file == "pack.py" or file == "__temp" or file.endswith(".mcdr") or file == ".git" or file == ".gitignore":
         continue
     if os.path.isdir(file):
         shutil.copytree(file, os.path.join("__temp", file))
@@ -20,4 +20,5 @@ for root, dirs, files in os.walk("__temp"):
 os.chdir("__temp")
 os.system("mcdreforged pack -o ../")
 
+os.chdir("../")
 shutil.rmtree("__temp")
