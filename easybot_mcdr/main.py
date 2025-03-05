@@ -70,7 +70,7 @@ async def bind(source: CommandSource):
         return
 
     bind_data = await wsc.get_social_account(source.player)
-    if bind_data["uuid"] is None or bind_data["uuid"] is "":
+    if bind_data["uuid"] is None or bind_data["uuid"] == "":
         code = await wsc.start_bind(source.player)
         message: str = get_config()["message"]["start_bind"]
         message = message.replace("#code", code["code"])
@@ -138,7 +138,7 @@ async def on_info(server, info: Info):
         name = match.group(1)
         if is_white_list_enable():
             bind_info = await wsc.get_social_account(name)
-            if bind_info["uuid"] is not None and bind_info["uuid"] is not "":
+            if bind_info["uuid"] is not None and bind_info["uuid"] != "":
                 server.execute("whitelist add " + name)
     pass
 
