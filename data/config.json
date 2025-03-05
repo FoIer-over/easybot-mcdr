@@ -1,5 +1,5 @@
 {
-    "token": "HmGmHmJJnIcLX6NwFYih41ETjt4!G9G7",
+    "token": "",
     "ws": "ws://localhost:26990/bridge",
     "debug": false,
     "message_sync": {
