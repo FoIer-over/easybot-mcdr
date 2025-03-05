@@ -91,8 +91,11 @@ async def reload(source: CommandSource):
 
 
 async def say(source: CommandSource, context: CommandContext):
+    name = "CONSOLE"
+    if source.is_player:
+        name = source.player
+    await wsc.push_message(name, context["message"], True)
     source.reply("§a消息已发送: §f" + context["message"])
-    await wsc.push_message(source.player, context["message"], True)
 
 
 kick_map = []
