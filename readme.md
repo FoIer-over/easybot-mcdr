@@ -2,6 +2,10 @@
 
 > EasyBot 是一款集消息同步、自定义命令、绑定管理、高级权限控制、群组互动、自定义模板支持以及自定义插件支持等全方位功能于一体的服务器管理工具，全方位优化游戏社区体验!
 
+## 文档
+
+[点我查看](https://docs.inectar.cn/docs/easybot/quick_start/plugin/mcdr/install_mcdr)
+
 ## 开发环境
 
 - `Python`: `3.12.8`
