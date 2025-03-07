@@ -17,7 +17,7 @@ async def exec_get_server_info(ctx: ExecContext, data:dict, _):
         online_mode = str(online_mode).lower().strip() == "true"
     packet = {
         "server_name": "mcdr",
-        "server_version": f"MCDR {server.get_plugin_metadata("mcdreforged").version}",
+        "server_version": f"MCDR {server.get_plugin_metadata('mcdreforged').version}",
         "plugin_version":get_plugin_version(),
         "is_papi_supported":  False,
         "is_command_supported": False,

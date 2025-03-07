@@ -226,7 +226,7 @@ class EasyBotWsClient:
           self._session_info.set_server_name(
               data["server_name"]
           )
-          logger.info(f"身份验证成功,已经成功连接到EasyBot。 [{data["server_name"]}]")
+          logger.info(f"身份验证成功,已经成功连接到EasyBot。 [{data['server_name']}]")
             # 启动心跳
           if self._session_info is not None:
                 interval = self._session_info.get_interval()

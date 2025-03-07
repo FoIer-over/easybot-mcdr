@@ -8,7 +8,7 @@ async def exec_bind_success_notify(ctx: ExecContext, data:dict, _):
     logger = server.logger
 
     if not server.is_rcon_running():
-        logger.error(f"RCON未开启,无法执行命令 -> {data["command"]}")
+        logger.error(f"RCON未开启,无法执行命令 -> {data['command']}")
         ctx.callback({
             "success": False,
             "text": "目标MCDR未开启未开启RCON,无法执行命令!"

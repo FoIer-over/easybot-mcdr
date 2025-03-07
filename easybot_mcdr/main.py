@@ -78,7 +78,7 @@ async def bind(source: CommandSource):
         source.reply(message)
     else:
         source.reply(
-            f"§c你已经绑定了账号, ({bind_data["name"]}/{bind_data["uuid"]}/时间:{bind_data["time"]}/{bind_data["platform"]})"
+            f"§c你已经绑定了账号, ({bind_data['name']}/{bind_data['uuid']}/时间:{bind_data['time']}/{bind_data['platform']})"
         )
 
 
@@ -109,7 +109,8 @@ def push_kick(player: str, reason: str):
     if not server.is_rcon_running():
         server.logger.error("你的服务器RCON当前并未运行,踢出玩家的原因无法显示多行。")
         server.logger.error(f"即将踢出玩家 {player} 并且只显示踢出原因的第一行!")
-        server.execute(f"kick {player} {reason.split('\n')[0]}")
+        first_line = reason.split("\n")[0]
+        server.execute(f"kick {player} {first_line}")
         return
     global kick_map
     server.rcon_query(f"kick {player} {reason}")
