@@ -41,5 +41,7 @@
                 }
             }
         }
-    }
+    },
+    "enable_fake_player_filter": false,  
+    "fake_player_prefix": "bot_"             
 }

@@ -20,7 +20,7 @@ async def exec_get_server_info(ctx: ExecContext, data:dict, _):
         "server_version": f"MCDR {server.get_plugin_metadata('mcdreforged').version}",
         "plugin_version":get_plugin_version(),
         "is_papi_supported":  False,
-        "is_command_supported": False,
+        "is_command_supported": True,
         "has_geyser": False,
         "is_online_mode": online_mode
     }
