@@ -1,2 +1,2 @@
 def get_plugin_version():
-    return "1.0.2"
+    return "1.0.3"
