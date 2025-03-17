@@ -2,6 +2,8 @@ import json
 import os
 from mcdreforged.api.all import *
 
+config = {}
+
 def load_config(server: PluginServerInterface):
     global config
     server.logger.info("加载配置中...")
@@ -19,6 +21,21 @@ def load_config(server: PluginServerInterface):
         config = json.load(f)
         server.logger.info(f"配置文件路径: {config_file_path}")
         server.logger.info("配置文件加载成功")
+    
+    # 如果缺少 bot_filter，动态添加默认值
+    if "bot_filter" not in config:
+        config["bot_filter"] = {
+            "enabled": True,
+            "prefixes": ["Bot_", "BOT_", "bot_"]
+        }
+        save_config(server)
+
+def save_config(server: PluginServerInterface):
+    config_path = server.get_data_folder()
+    config_file_path = os.path.join(config_path, "config.json")
+    with open(config_file_path, "w", encoding="utf-8", newline='') as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+    server.logger.info("配置文件已保存")
 
 def get_config() -> dict:
     return config

@@ -14,17 +14,13 @@
         "bind_success": {
             "exec_command": false,
             "add_whitelist": true,
-            "comamnds": [
-                "say 玩家#player绑定账号#name（#account）成功"
-            ]
+            "comamnds": ["say 玩家#player绑定账号#name（#account）成功"]
         },
         "un_bind": {
             "kick": true,
             "remove_white_list": true,
             "exec_command": false,
-            "comamnds": [
-                "say 玩家#player解绑了账号。"
-            ]
+            "comamnds": ["say 玩家#player解绑了账号。"]
         },
         "message": {
             "on_at": {
@@ -42,6 +38,8 @@
             }
         }
     },
-    "enable_fake_player_filter": false,  
-    "fake_player_prefix": "bot_"             
+    "bot_filter": {
+        "enabled": false,
+        "prefixes": ["Bot_", "BOT_", "bot_"]
+    }
 }
