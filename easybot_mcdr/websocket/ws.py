@@ -360,3 +360,12 @@ class EasyBotWsClient:
             "player_name": player_name
         })
         return resp
+    
+    async def push_cross_server_message(self, player: str, message: str):
+        config = get_config()
+        server_name = config["server_name"]
+        await self._send_packet("CROSS_SERVER_SAY", {
+            "server_name": server_name,
+            "player": player,
+            "message": message
+        })
