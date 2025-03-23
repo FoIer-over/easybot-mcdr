@@ -119,7 +119,7 @@ async def bind(source: CommandSource):
         )
 
 async def reload(source: CommandSource):
-    if not source.has_permission > 3:
+    if source.has_permission(3):
         source.reply(f"§c你没有权限使用这个命令!")
         return
     await load()
