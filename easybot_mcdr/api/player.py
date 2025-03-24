@@ -21,18 +21,15 @@ uuid_map = {}
 cached_data = {} 
 
 def get_data_map():
-    global online_players
-    global uuid_map
+    global online_players, uuid_map, cached_data
     return {
         "online_players": online_players,
         "uuid_map": uuid_map,
         "cache": cached_data
     }
 
-def load_data_map(data:dict):
-    global online_players
-    global uuid_map
-    global cached_data
+def load_data_map(data: dict):
+    global online_players, uuid_map, cached_data
     online_players = data["online_players"]
     uuid_map = data["uuid_map"]
     cached_data = data["cache"]
@@ -50,7 +47,7 @@ def init_player_api(server: PluginServerInterface, old):
     pass
 
 def list_player(sender: CommandSource):
-    if not source.has_permission > 3:
+    if not source.has_permission(3):
         sender.reply("§c你没有权限使用这个命令!")
     sender.reply("§a在线玩家列表: ")
 

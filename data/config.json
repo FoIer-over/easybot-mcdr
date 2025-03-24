@@ -1,6 +1,7 @@
 {
     "token": "",
     "ws": "ws://localhost:26990/bridge",
+    "server_name": "server_name",
     "debug": false,
     "message_sync": {
         "ignore_mcdr_command": true

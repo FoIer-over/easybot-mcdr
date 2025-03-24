@@ -3,7 +3,11 @@ from easybot_mcdr.api.player import get_data_map, init_player_api
 from easybot_mcdr.config import get_config, load_config, save_config
 from easybot_mcdr.utils import is_white_list_enable
 from easybot_mcdr.websocket.ws import EasyBotWsClient
+import easybot_mcdr.impl.cross_server_chat
 import re
+import json
+import os
+import asyncio
 
 wsc: EasyBotWsClient = None
 player_data_map = {}
@@ -20,6 +24,11 @@ help_msg = '''--------§a EasyBot V1.0.3§r--------
 §b!!ez say <message> §f- §c发送消息
 §b!!esay <message> §f- §c同上
 §b!!say <message> §f- §c同上
+
+§c跨服聊天
+§b!!ez ssay <message> §f- §c发送跨服消息
+§b!!essay <message> §f- §c同上
+§b!!ssay <message> §f- §c同上
 
 §c假人过滤设置(需MCDR 3级权限及以上)
 §b!!ez bot toggle §f- §c开启/关闭假人过滤
@@ -43,12 +52,42 @@ async def on_load(server: PluginServerInterface, prev_module):
     global server_interface
     server_interface = server
 
-    if prev_module is not None and hasattr(prev_module, "player_data_map"):
-        init_player_api(server, prev_module.player_data_map)
+    from easybot_mcdr.api.player import PlayerInfo
+    if os.path.exists("easybot_cache.json"):
+        with open("easybot_cache.json", "r") as f:
+            saved_data = json.load(f)
+        init_player_api(server, {
+            "online_players": {k: PlayerInfo(**v) for k, v in saved_data["online_players"].items()},
+            "uuid_map": saved_data["uuid_map"],
+            "cache": {k: PlayerInfo(**v) for k, v in saved_data["cache"].items()}
+        })
+        # Clear the file after loading
+        os.remove("easybot_cache.json")
     else:
         init_player_api(server, None)
     await load()
 
+    # Sync online_players with actual online players using RCON
+    if server.is_rcon_running():
+        try:
+            result = server.rcon_query('list')
+            # Example output: "There are 2 of a max 20 players online: player1, player2"
+            match = re.search(r'There are (\d+) of a max (\d+) players online: (.*)', result)
+            if match:
+                player_list_str = match.group(3)
+                actual_online = [p.strip() for p in player_list_str.split(',') if p.strip()]
+                # Update online_players by removing players who are no longer online
+                for player in list(online_players.keys()):
+                    if player not in actual_online:
+                        online_players.pop(player)
+                        server.logger.info(f"从在线玩家列表移除了{player} ,因为他们不再在线")
+            else:
+                server.logger.warning("解析列表输出失败")
+        except Exception as e:
+            server.logger.warning(f"RCON查询失败: {e}")
+    else:
+        server.logger.warning("RCON未启用,无法同步玩家列表")
+    
     builder = SimpleCommandBuilder()
     # 定义参数
     builder.arg("message", Text)  
@@ -63,6 +102,9 @@ async def on_load(server: PluginServerInterface, prev_module):
     builder.command("!!say <message>", say)
     builder.command("!!esay <message>", say)
     builder.command("!!ez say <message>", say)
+    builder.command("!!ez ssay <message>", cross_server_say)
+    builder.command("!!essay <message>", cross_server_say)
+    builder.command("!!ssay <message>", cross_server_say)
 
     # 假人过滤命令
     builder.command("!!ez bot toggle", toggle_bot_filter)
@@ -72,6 +114,8 @@ async def on_load(server: PluginServerInterface, prev_module):
 
     builder.register(server)
     server.logger.info("插件加载完成")
+    wsc = EasyBotWsClient(get_config()["ws"])
+    asyncio.create_task(wsc.start())
 
     server.register_help_message('!!ez', '显示EasyBot的帮助菜单')
 
@@ -82,6 +126,14 @@ async def show_help(source: CommandSource):
 async def on_unload(server: PluginServerInterface):
     global player_data_map, wsc
     player_data_map = get_data_map()
+    # Save to file
+    data_to_save = {
+        "online_players": {k: v.__dict__ for k, v in player_data_map["online_players"].items()},
+        "uuid_map": player_data_map["uuid_map"],
+        "cache": {k: v.__dict__ for k, v in player_data_map["cache"].items()}
+    }
+    with open("easybot_cache.json", "w") as f:
+        json.dump(data_to_save, f)
     await close()
     server.logger.info("插件卸载完成")
 
@@ -119,7 +171,7 @@ async def bind(source: CommandSource):
         )
 
 async def reload(source: CommandSource):
-    if source.has_permission(3):
+    if not source.has_permission(3):
         source.reply(f"§c你没有权限使用这个命令!")
         return
     await load()
@@ -149,7 +201,7 @@ def push_kick(player: str, reason: str):
     kick_map.append(player)
 
 async def toggle_bot_filter(source: CommandSource):
-    if not source.has_permission > 3:
+    if not source.has_permission(3):
         source.reply("§c你没有权限使用这个命令!")
         return
     config = get_config()
@@ -160,7 +212,7 @@ async def toggle_bot_filter(source: CommandSource):
     source.reply(f"§a假人过滤已{state}")
 
 async def add_bot_prefix(source: CommandSource, context: CommandContext):
-    if not source.has_permission > 3:
+    if not source.has_permission(3):
         source.reply("§c你没有权限使用这个命令!")
         return
     prefix = context["prefix"]
@@ -175,7 +227,7 @@ async def add_bot_prefix(source: CommandSource, context: CommandContext):
         source.reply(f"§c前缀 {prefix} 已存在!")
 
 async def remove_bot_prefix(source: CommandSource, context: CommandContext):
-    if not source.has_permission > 3:
+    if not source.has_permission(3):
         source.reply("§c你没有权限使用这个命令!")
         return
     prefix = context["prefix"]
@@ -190,7 +242,7 @@ async def remove_bot_prefix(source: CommandSource, context: CommandContext):
         source.reply(f"§c前缀 {prefix} 不存在!")
 
 async def list_bot_prefixes(source: CommandSource):
-    if not source.has_permission > 3:
+    if not source.has_permission(3):
         source.reply("§c你没有权限使用这个命令!")
         return
     config = get_config()
@@ -257,3 +309,12 @@ async def on_user_info(server: PluginServerInterface, info: Info):
     ):
         return
     await wsc.push_message(info.player, info.content, False)
+
+async def cross_server_say(source: CommandSource, context: CommandContext):
+    if not source.is_player:
+        source.reply("§c这个命令只能由玩家使用!")
+        return
+    player = source.player
+    message = context["message"]
+    await wsc.push_cross_server_message(player, message)
+    source.reply("§a你的消息已发送到其他服务器.")
