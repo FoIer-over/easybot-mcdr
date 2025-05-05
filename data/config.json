@@ -40,7 +40,7 @@
         }
     },
     "bot_filter": {
-        "enabled": false,
+        "enabled": true,
         "prefixes": ["Bot_", "BOT_", "bot_"]
     }
 }

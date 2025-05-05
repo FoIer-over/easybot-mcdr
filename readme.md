@@ -49,9 +49,3 @@ PlaceholderAPI 是一个用于 `Bukkit/Spigot` 服务器端的 API，它提供�
 > ⚠ 此功能正在开发
 
 检测到服务器安装了PlaceholderAPI 时, 使用RCON执行解析变量。
-
-## 发布
-
-```bash
-python ./pack.py
-```

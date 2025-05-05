@@ -295,7 +295,6 @@ class EasyBotWsClient:
         }, 5)
         return data
 
-# easybot_mcdr\websocket\ws.py
     async def report_player(self, player_name: str):
         from easybot_mcdr.api.player import build_player_info
         info = build_player_info(player_name)

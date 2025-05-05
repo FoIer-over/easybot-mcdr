@@ -31,3 +31,20 @@ async def exec_get_server_info(ctx: ExecContext, data:dict, _):
 
 def is_online_mode():
     return is_online_mode
+
+@new_thread("EasyBot-GetPlayers")
+def get_online_players(server: PluginServerInterface):
+    try:
+        players = server.get_online_players()
+        server.logger.debug(f"获取在线玩家列表: {players}")
+        return {
+            "success": True,
+            "players": players,
+            "count": len(players)
+        }
+    except Exception as e:
+        server.logger.warning(f"获取在线玩家列表失败: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
