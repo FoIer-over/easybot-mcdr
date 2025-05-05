@@ -14,7 +14,7 @@ wsc: EasyBotWsClient = None
 player_data_map = {}
 rcon_initialized = False  # 添加RCON连接状态标志
 
-help_msg = '''--------§a EasyBot V1.0.3§r--------
+help_msg = '''--------§a EasyBot V1.1.0§r--------
 §b!!ez help §f- §c显示帮助菜单
 §b!!ez reload §f- §c重载配置文件
 
