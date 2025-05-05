@@ -47,7 +47,7 @@ def init_player_api(server: PluginServerInterface, old):
     pass
 
 def list_player(sender: CommandSource):
-    if not source.has_permission(3):
+    if not sender.has_permission(3):
         sender.reply("§c你没有权限使用这个命令!")
     sender.reply("§a在线玩家列表: ")
 
@@ -83,8 +83,18 @@ def on_server_stop(server, return_code):
     cached_data = []
 
 
+def is_bot_player(player: str) -> bool:
+    """Check if player is a bot by name prefix"""
+    return player.startswith(('Bot_', 'BOT_', 'bot_'))
+
 def on_player_joined(server, player, info: Info):
     logger = ServerInterface.get_instance().logger
+    
+    # Skip bot players
+    if is_bot_player(player):
+        logger.info(f"检测到假人玩家 {player}，跳过数据处理")
+        return
+        
     uuid = uuid_map.get(player)
     if uuid is None:
         if is_online_mode():
@@ -127,6 +137,11 @@ def build_player_info(player: str):
     }
 
 def on_player_left(server, player):
+    logger = ServerInterface.get_instance().logger
+    if is_bot_player(player):
+        logger.info(f"检测到假人玩家 {player} 退出，跳过数据处理")
+        return
+        
     if player in online_players:
         online_players.pop(player)
 

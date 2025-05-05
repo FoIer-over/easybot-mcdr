@@ -11,24 +11,36 @@ def load_config(server: PluginServerInterface):
     os.makedirs(config_path, exist_ok=True)
     config_file_path = os.path.join(config_path, "config.json")
     
-    if not os.path.exists(config_file_path):
-        with server.open_bundled_file("data/config.json") as data:
-            with open(config_file_path, "w", encoding="utf-8", newline='') as f:
-                f.write(data.read().decode("utf-8"))
-                server.logger.info("配置文件不存在，已创建配置文件")
-    
-    with open(config_file_path, "r", encoding="utf-8", newline='') as f:
-        config = json.load(f)
-        server.logger.info(f"配置文件路径: {config_file_path}")
-        server.logger.info("配置文件加载成功")
-    
-    # 如果缺少 bot_filter，动态添加默认值
-    if "bot_filter" not in config:
-        config["bot_filter"] = {
-            "enabled": True,
-            "prefixes": ["Bot_", "BOT_", "bot_"]
-        }
-        save_config(server)
+    try:
+        # 加载配置文件
+        with open(config_file_path, "r", encoding="utf-8-sig", newline='') as f:
+            loaded_config = json.load(f)
+            server.logger.info(f"配置文件路径: {config_file_path}")
+            
+            # 调试打印配置内容
+            server.logger.debug(f"原始配置内容: {json.dumps(loaded_config, indent=2)}")
+            
+            # 验证必要字段
+            required_fields = ["ws", "token", "server_name"]
+            missing_fields = [field for field in required_fields if field not in loaded_config]
+            
+            if missing_fields:
+                error_msg = f"配置缺少必要字段: {missing_fields}"
+                server.logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+            # 更新全局配置
+            config.clear()
+            config.update(loaded_config)
+            
+            # 调试打印最终配置
+            server.logger.debug(f"最终配置内容: {json.dumps(config, indent=2)}")
+            server.logger.info("配置文件加载并验证成功")
+            
+    except json.JSONDecodeError as e:
+        error_msg = f"配置文件解析失败: {str(e)}"
+        server.logger.error(error_msg)
+        raise ValueError(error_msg)
 
 def save_config(server: PluginServerInterface):
     config_path = server.get_data_folder()

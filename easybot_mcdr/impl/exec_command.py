@@ -18,10 +18,20 @@ async def exec_bind_success_notify(ctx: ExecContext, data:dict, _):
     if data["enable_papi"]:
         from easybot_mcdr.impl.papi import run_placeholder
         command = await run_placeholder(command, data["player_name"])
-    resp = server.rcon_query(command)
-    logger.info(f"执行命令 -> {command}")
-    logger.info(f"执行结果 -> {resp}")
-    await ctx.callback({
-        "success": True,
-        "text": resp
-    })
+    try:
+        if not server.is_rcon_running():
+            raise Exception("RCON未启用")
+            
+        resp = server.rcon_query(command)
+        logger.debug(f"执行命令 -> {command}")
+        logger.debug(f"执行结果 -> {resp}")
+        await ctx.callback({
+            "success": True,
+            "text": resp
+        })
+    except Exception as e:
+        logger.warning(f"RCON查询失败: {str(e)}")
+        await ctx.callback({
+            "success": False,
+            "text": f"RCON查询失败: {str(e)}"
+        })

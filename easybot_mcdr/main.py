@@ -1,4 +1,5 @@
 from mcdreforged.api.all import *
+import websockets
 from easybot_mcdr.api.player import get_data_map, init_player_api
 from easybot_mcdr.config import get_config, load_config, save_config
 from easybot_mcdr.utils import is_white_list_enable
@@ -11,6 +12,7 @@ import asyncio
 
 wsc: EasyBotWsClient = None
 player_data_map = {}
+rcon_initialized = False  # 添加RCON连接状态标志
 
 help_msg = '''--------§a EasyBot V1.0.3§r--------
 §b!!ez help §f- §c显示帮助菜单
@@ -49,44 +51,82 @@ def is_bot_player(player: str) -> bool:
 
 
 async def on_load(server: PluginServerInterface, prev_module):
-    global server_interface
+    global server_interface, wsc
     server_interface = server
+    server.logger.info("开始加载EasyBot插件...")
 
-    from easybot_mcdr.api.player import PlayerInfo
-    if os.path.exists("easybot_cache.json"):
-        with open("easybot_cache.json", "r") as f:
-            saved_data = json.load(f)
-        init_player_api(server, {
-            "online_players": {k: PlayerInfo(**v) for k, v in saved_data["online_players"].items()},
-            "uuid_map": saved_data["uuid_map"],
-            "cache": {k: PlayerInfo(**v) for k, v in saved_data["cache"].items()}
-        })
-        # Clear the file after loading
-        os.remove("easybot_cache.json")
-    else:
-        init_player_api(server, None)
-    await load()
+    try:
+        from easybot_mcdr.api.player import PlayerInfo
+        if os.path.exists("easybot_cache.json"):
+            server.logger.info("检测到缓存文件，加载玩家数据...")
+            with open("easybot_cache.json", "r") as f:
+                saved_data = json.load(f)
+            init_player_api(server, {
+                "online_players": {k: PlayerInfo(**v) for k, v in saved_data["online_players"].items()},
+                "uuid_map": saved_data["uuid_map"],
+                "cache": {k: PlayerInfo(**v) for k, v in saved_data["cache"].items()}
+            })
+            # Clear the file after loading
+            os.remove("easybot_cache.json")
+            server.logger.info("玩家数据加载完成")
+        else:
+            server.logger.info("未找到缓存文件，初始化空玩家数据")
+            init_player_api(server, None)
+        
+        server.logger.info("初始化WebSocket连接...")
+        await load()
+        
+        # 确保WebSocket连接已启动
+        wsc = EasyBotWsClient(get_config()["ws"])
+        asyncio.create_task(wsc.start())
+        
+        # 注册事件监听器
+        server.logger.info("注册事件监听器...")
+        server.register_event_listener('server_started', on_server_started)
+        # 注册假人相关事件
+        server.register_event_listener('player_death', on_player_death)
+        server.register_event_listener('player_left', on_player_left)
+        server.logger.info(f"已注册事件监听器: player_death={on_player_death}, player_left={on_player_left}")
+        
+        server.logger.info("EasyBot插件加载完成")
+    except Exception as e:
+        server.logger.error(f"插件加载过程中发生错误: {str(e)}")
+        raise
 
-    # Sync online_players with actual online players using RCON
     if server.is_rcon_running():
         try:
             result = server.rcon_query('list')
-            # Example output: "There are 2 of a max 20 players online: player1, player2"
-            match = re.search(r'There are (\d+) of a max (\d+) players online: (.*)', result)
+        # 检查 RCON 查询结果是否有效
+            if result is None:
+                server.logger.warning("RCON 查询返回空结果，请检查 RCON 连接状态")
+                return
+        # 增强正则表达式兼容性
+            match = re.search(
+                r'There are (\d+) of a max (\d+) players online[^\d]*?(?:[:]?\s*(.*))?$',
+                result,
+                re.IGNORECASE
+            )
+            actual_online = []  # 初始化默认值
             if match:
-                player_list_str = match.group(3)
+                online_count = int(match.group(1))
+                max_players = int(match.group(2))
+                player_list_str = match.group(3) or ''  # 处理可能的 None
                 actual_online = [p.strip() for p in player_list_str.split(',') if p.strip()]
-                # Update online_players by removing players who are no longer online
+            
+            # 更新在线玩家列表
+            player_data_map = get_data_map()
+            if "online_players" in player_data_map:
+                online_players = player_data_map["online_players"]
                 for player in list(online_players.keys()):
                     if player not in actual_online:
                         online_players.pop(player)
-                        server.logger.info(f"从在线玩家列表移除了{player} ,因为他们不再在线")
+                        server.logger.info(f"从在线玩家列表移除了 {player}，因为他们不再在线")
             else:
-                server.logger.warning("解析列表输出失败")
+                server.logger.warning(f"解析列表输出失败，原始输出: {result}")
         except Exception as e:
-            server.logger.warning(f"RCON查询失败: {e}")
+            server.logger.warning(f"RCON 查询失败: {e}")
     else:
-        server.logger.warning("RCON未启用,无法同步玩家列表")
+        server.logger.warning("RCON 未启用，无法同步玩家列表")
     
     builder = SimpleCommandBuilder()
     # 定义参数
@@ -114,9 +154,6 @@ async def on_load(server: PluginServerInterface, prev_module):
 
     builder.register(server)
     server.logger.info("插件加载完成")
-    wsc = EasyBotWsClient(get_config()["ws"])
-    asyncio.create_task(wsc.start())
-
     server.register_help_message('!!ez', '显示EasyBot的帮助菜单')
 
 async def show_help(source: CommandSource):
@@ -124,34 +161,164 @@ async def show_help(source: CommandSource):
         source.reply(line)
 
 async def on_unload(server: PluginServerInterface):
-    global player_data_map, wsc
-    player_data_map = get_data_map()
-    # Save to file
-    data_to_save = {
-        "online_players": {k: v.__dict__ for k, v in player_data_map["online_players"].items()},
-        "uuid_map": player_data_map["uuid_map"],
-        "cache": {k: v.__dict__ for k, v in player_data_map["cache"].items()}
-    }
-    with open("easybot_cache.json", "w") as f:
-        json.dump(data_to_save, f)
-    await close()
-    server.logger.info("插件卸载完成")
+    global player_data_map, wsc, server_interface
+    
+    try:
+        # 保存玩家数据
+        player_data_map = get_data_map()
+        
+        # 安全处理所有数据字段
+        def safe_convert(data):
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                return {k: v.__dict__ if hasattr(v, '__dict__') else v for k, v in data.items()}
+            return {}
+            
+        data_to_save = {
+            "online_players": safe_convert(player_data_map.get("online_players", [])),
+            "uuid_map": safe_convert(player_data_map.get("uuid_map", {})),
+            "cache": safe_convert(player_data_map.get("cache", []))
+        }
+        
+        server.logger.debug(f"准备保存的数据: {data_to_save}")
+        
+        with open("easybot_cache.json", "w") as f:
+            json.dump(data_to_save, f, indent=2)
+        
+        # 关闭连接和清理资源
+        await close()
+        
+        # 清理全局变量
+        player_data_map = {}
+        server_interface = None
+        
+        server.logger.info("插件已完全卸载")
+    except Exception as e:
+        server.logger.error(f"卸载插件时出错: {e}")
+        raise
 
 async def close():
     global wsc
     if wsc is not None:
-        await wsc.stop()
-        wsc = None
+        try:
+            await wsc.stop()
+            # 确保连接完全关闭
+            if hasattr(wsc, '_ws') and wsc._ws is not None:
+                await wsc._ws.close()
+            # 取消可能的心跳任务
+            if hasattr(wsc, '_heartbeat_task') and wsc._heartbeat_task is not None:
+                wsc._heartbeat_task.cancel()
+                try:
+                    await wsc._heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+        except Exception as e:
+            server_interface.logger.error(f"关闭连接时出错: {e}")
+        finally:
+            wsc = None
 
 async def load():
     global wsc, server_interface
+    server_interface.logger.info("初始化WebSocket客户端...")
     load_config(server_interface)
-    wsc = EasyBotWsClient(get_config()["ws"])
-    try:
-        await wsc.start()
-    except Exception as e:
-        server_interface.logger.error(f"连接失败: {e}")
-        server_interface.logger.error("请检查配置文件ws地址是否正确!")
+    
+    # 关闭现有连接
+    if wsc is not None:
+        server_interface.logger.info("关闭现有WebSocket连接...")
+        await wsc.stop()
+    
+    # 创建新的WebSocket客户端
+    server_interface.logger.info("创建新的WebSocket客户端实例...")
+    ws_config = get_config().get("ws", {})
+    server_interface.logger.info(f"WebSocket配置: {ws_config}")
+    if not ws_config:
+        server_interface.logger.error("未找到WebSocket配置!")
+        return
+    
+    # 添加连接状态检查方法
+    class EnhancedWsClient(EasyBotWsClient):
+        async def is_connected(self):
+            """检查WebSocket连接状态"""
+            try:
+                return self._ws is not None and self._ws.state == websockets.State.OPEN
+            except Exception as e:
+                self._logger.error(f"检查连接状态失败: {str(e)}")
+                return False
+    
+    wsc = EnhancedWsClient(ws_config)
+    server_interface.logger.info(f"WebSocket客户端初始化完成: {wsc is not None}")
+
+@new_thread("EasyBot Startup")
+def on_server_started(server: PluginServerInterface):
+    global wsc
+    server.logger.info("检测到服务器启动事件，开始WebSocket连接流程...")
+    
+    async def connect_and_report():
+        max_attempts = 5  # 增加尝试次数
+        retry_delay = 3   # 缩短重试间隔
+        
+        for attempt in range(max_attempts):
+            try:
+                server.logger.info(f"尝试WebSocket连接 (尝试 {attempt + 1}/{max_attempts})")
+                if wsc is None:
+                    server.logger.error("WebSocket客户端未初始化")
+                    return False
+                
+                # 检查是否已连接
+                if hasattr(wsc, 'is_connected') and await wsc.is_connected():
+                    server.logger.info("WebSocket已连接，无需重新连接")
+                else:
+                    server.logger.info("正在建立新连接...")
+                    if not await wsc.start():
+                        raise ConnectionError("WebSocket连接失败")
+                    server.logger.info("WebSocket连接成功")
+                
+                # 连接成功后上报服务器信息
+                server.logger.info("开始上报服务器信息...")
+                server_info = {
+                    'name': server.get_server_information().name,
+                    'version': server.get_server_information().version,
+                    'player_count': len(server.get_online_players()),
+                    'max_players': server.get_server_information().max_players,
+                    'motd': server.get_server_information().description,
+                    'port': server.get_server_information().port
+                }
+                
+                # 上报服务器信息
+                await wsc._send_packet("REPORT_SERVER_INFO", server_info)
+                server.logger.info("服务器信息上报成功")
+                
+                # 上报当前在线玩家
+                for player in server.get_online_players():
+                    try:
+                        await wsc.report_player(player)
+                        server.logger.debug(f"玩家 {player} 信息上报成功")
+                    except Exception as e:
+                        server.logger.error(f"上报玩家 {player} 信息失败: {str(e)}")
+                
+                return True
+                
+            except Exception as e:
+                server.logger.error(f"连接/上报尝试失败: {type(e).__name__}: {str(e)}")
+                if attempt < max_attempts - 1:
+                    server.logger.info(f"{retry_delay}秒后重试...")
+                    await asyncio.sleep(retry_delay)
+        
+        server.logger.error("WebSocket连接/上报失败，请检查以下内容:")
+        server.logger.error("- WebSocket服务端是否运行")
+        server.logger.error("- 配置是否正确 (地址: %s)", get_config().get("ws", {}).get("address"))
+        server.logger.error("- 网络连接是否正常")
+        return False
+    
+    if wsc is not None:
+        try:
+            asyncio.run(connect_and_report())
+        except Exception as e:
+            server.logger.error(f"连接/上报过程中发生未预期错误: {type(e).__name__}: {str(e)}")
+    else:
+        server.logger.error("无法连接: WebSocket客户端未初始化")
+        server.logger.info("建议重新加载插件以初始化客户端")
 
 async def bind(source: CommandSource):
     if source.is_console:
@@ -254,15 +421,18 @@ async def list_bot_prefixes(source: CommandSource):
 
 async def on_player_joined(server: PluginServerInterface, player: str, info: Info):
     try:
+        config = get_config()
+        bot_filter = config.get("bot_filter", {"enabled": True, "prefixes": ["Bot_", "BOT_", "bot_"]})
+        server.logger.debug(f"假人过滤配置: enabled={bot_filter['enabled']}, prefixes={bot_filter['prefixes']}")
+        
         if is_bot_player(player):
             ip = "unknown"
             if match := re.search(r'\d+\.\d+\.\d+\.\d+', info.raw_content):
                 ip = match.group()
             from easybot_mcdr.api.player import cached_data
-            # 获取 PlayerInfo 对象，如果不存在则使用默认值
             player_info = cached_data.get(player)
             uuid = player_info.uuid if player_info else "unknown"
-            server.logger.info(f"假人 {player} 已加入: UUID={uuid}, IP={ip}")
+            server.logger.info(f"检测到假人 {player} (匹配前缀: {bot_filter['prefixes']}), UUID={uuid}, IP={ip}")
             return
 
         player_info = await wsc.report_player(player)
@@ -294,10 +464,31 @@ async def on_info(server, info: Info):
             if bind_info["uuid"] is not None and bind_info["uuid"] != "":
                 server.execute("whitelist add " + name)
 
+async def on_player_death(server: PluginServerInterface, player: str, killer: str = None):
+    config = get_config()
+    bot_filter = config.get("bot_filter", {"enabled": True, "prefixes": ["Bot_", "BOT_", "bot_"]})
+    server.logger.debug(f"处理玩家死亡事件: {player}, 假人过滤状态: enabled={bot_filter['enabled']}")
+    
+    if is_bot_player(player):
+        server.logger.info(f"过滤假人 {player} 的死亡事件 (匹配前缀: {bot_filter['prefixes']})")
+        return
+    server.logger.debug(f"正常玩家 {player} 死亡事件处理")
+
 async def on_player_left(server: PluginServerInterface, player: str):
+    config = get_config()
+    bot_filter = config.get("bot_filter", {"enabled": True, "prefixes": ["Bot_", "BOT_", "bot_"]})
+    server.logger.debug(f"处理玩家退出事件: {player}, 假人过滤状态: enabled={bot_filter['enabled']}")
+    
     if player in kick_map:
+        server.logger.debug(f"玩家 {player} 是被踢出的，跳过处理")
         kick_map.remove(player)
         return
+        
+    if is_bot_player(player):
+        server.logger.info(f"过滤假人 {player} 的退出事件 (匹配前缀: {bot_filter['prefixes']})")
+        return
+        
+    server.logger.debug(f"正常玩家 {player} 退出事件处理")
     await wsc.push_exit(player)
 
 async def on_user_info(server: PluginServerInterface, info: Info):
