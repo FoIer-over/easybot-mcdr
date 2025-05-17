@@ -14,7 +14,7 @@ wsc: EasyBotWsClient = None
 player_data_map = {}
 rcon_initialized = False  # 添加RCON连接状态标志
 
-help_msg = '''--------§a EasyBot V1.1.0§r--------
+help_msg = '''--------§a EasyBot V1.1.2§r--------
 §b!!ez help §f- §c显示帮助菜单
 §b!!ez reload §f- §c重载配置文件
 
@@ -61,10 +61,40 @@ async def on_load(server: PluginServerInterface, prev_module):
             server.logger.info("检测到缓存文件，加载玩家数据...")
             with open("easybot_cache.json", "r") as f:
                 saved_data = json.load(f)
+            # 处理可能的列表或字典格式的online_players
+            online_players = {}
+            if isinstance(saved_data["online_players"], list):
+                server.logger.warning("检测到旧版列表格式的online_players，正在转换...")
+                for player_info in saved_data["online_players"]:
+                    if isinstance(player_info, dict):
+                        name = player_info.get("name")
+                        if name:
+                            online_players[name] = PlayerInfo(**player_info)
+            elif isinstance(saved_data["online_players"], dict):
+                online_players = {k: PlayerInfo(**v) for k, v in saved_data["online_players"].items()}
+            else:
+                server.logger.error(f"未知的online_players格式: {type(saved_data['online_players'])}")
+                online_players = {}
+
+            # 处理cache数据
+            cache = {}
+            if isinstance(saved_data["cache"], list):
+                server.logger.warning("检测到旧版列表格式的cache，正在转换...")
+                for player_info in saved_data["cache"]:
+                    if isinstance(player_info, dict):
+                        name = player_info.get("name")
+                        if name:
+                            cache[name] = PlayerInfo(**player_info)
+            elif isinstance(saved_data["cache"], dict):
+                cache = {k: PlayerInfo(**v) for k, v in saved_data["cache"].items()}
+            else:
+                server.logger.error(f"未知的cache格式: {type(saved_data['cache'])}")
+                cache = {}
+
             init_player_api(server, {
-                "online_players": {k: PlayerInfo(**v) for k, v in saved_data["online_players"].items()},
+                "online_players": online_players,
                 "uuid_map": saved_data["uuid_map"],
-                "cache": {k: PlayerInfo(**v) for k, v in saved_data["cache"].items()}
+                "cache": cache
             })
             # Clear the file after loading
             os.remove("easybot_cache.json")
