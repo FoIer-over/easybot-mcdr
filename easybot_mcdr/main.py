@@ -14,7 +14,7 @@ wsc: EasyBotWsClient = None
 player_data_map = {}
 rcon_initialized = False  # 添加RCON连接状态标志
 
-help_msg = '''--------§a EasyBot V1.1.0§r--------
+help_msg = '''--------§a EasyBot V1.1.2§r--------
 §b!!ez help §f- §c显示帮助菜单
 §b!!ez reload §f- §c重载配置文件
 
@@ -61,10 +61,40 @@ async def on_load(server: PluginServerInterface, prev_module):
             server.logger.info("检测到缓存文件，加载玩家数据...")
             with open("easybot_cache.json", "r") as f:
                 saved_data = json.load(f)
+            # 处理可能的列表或字典格式的online_players
+            online_players = {}
+            if isinstance(saved_data["online_players"], list):
+                server.logger.warning("检测到旧版列表格式的online_players，正在转换...")
+                for player_info in saved_data["online_players"]:
+                    if isinstance(player_info, dict):
+                        name = player_info.get("name")
+                        if name:
+                            online_players[name] = PlayerInfo(**player_info)
+            elif isinstance(saved_data["online_players"], dict):
+                online_players = {k: PlayerInfo(**v) for k, v in saved_data["online_players"].items()}
+            else:
+                server.logger.error(f"未知的online_players格式: {type(saved_data['online_players'])}")
+                online_players = {}
+
+            # 处理cache数据
+            cache = {}
+            if isinstance(saved_data["cache"], list):
+                server.logger.warning("检测到旧版列表格式的cache，正在转换...")
+                for player_info in saved_data["cache"]:
+                    if isinstance(player_info, dict):
+                        name = player_info.get("name")
+                        if name:
+                            cache[name] = PlayerInfo(**player_info)
+            elif isinstance(saved_data["cache"], dict):
+                cache = {k: PlayerInfo(**v) for k, v in saved_data["cache"].items()}
+            else:
+                server.logger.error(f"未知的cache格式: {type(saved_data['cache'])}")
+                cache = {}
+
             init_player_api(server, {
-                "online_players": {k: PlayerInfo(**v) for k, v in saved_data["online_players"].items()},
+                "online_players": online_players,
                 "uuid_map": saved_data["uuid_map"],
-                "cache": {k: PlayerInfo(**v) for k, v in saved_data["cache"].items()}
+                "cache": cache
             })
             # Clear the file after loading
             os.remove("easybot_cache.json")
@@ -451,18 +481,78 @@ async def on_player_joined(server: PluginServerInterface, player: str, info: Inf
 async def on_info(server, info: Info):
     raw = info.raw_content
     import re
+    import hashlib
+    
+    # 尝试获取正版UUID
     if match := re.search(
         r"UUID of player (\w+) is ([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})",
         raw,
     ):
         name = match.group(1)
-        if is_bot_player(name):
-            server.logger.info(f"检测到假人 {name}，跳过白名单和绑定检查")
+        uuid = match.group(2)
+    else:
+        # 离线模式处理 - 从玩家加入消息中提取名字
+        if match := re.search(r"(\w+) joined the game", raw):
+            name = match.group(1)
+            # 生成离线模式UUID (根据Mojang规范)
+            digest = hashlib.md5(b"OfflinePlayer:" + name.encode('utf-8')).digest()
+            # 转换为可变的bytearray
+            namespace = bytearray(digest)
+            # 设置版本位 (第6字节的高4位为0011)
+            namespace[6] = (namespace[6] & 0x0f) | 0x30  # Version 3
+            # 设置变体位 (第8字节的高2位为10)
+            namespace[8] = (namespace[8] & 0x3f) | 0x80  # Variant RFC 4122
+            # 转换回bytes并格式化为UUID字符串
+            uuid = '-'.join([
+                bytes(namespace[0:4]).hex(),
+                bytes(namespace[4:6]).hex(),
+                bytes(namespace[6:8]).hex(),
+                bytes(namespace[8:10]).hex(),
+                bytes(namespace[10:16]).hex()
+            ])
+        else:
             return
-        if is_white_list_enable():
+    
+    if is_bot_player(name):
+        server.logger.info(f"检测到假人 {name}，跳过白名单和绑定检查")
+        return
+        
+    # 确保UUID有效
+    if not uuid or uuid == "unknown":
+        server.logger.warning(f"玩家 {name} 的UUID无效，尝试重新生成")
+        namespace = bytearray(hashlib.md5(b"OfflinePlayer:" + name.encode('utf-8')).digest())
+        namespace[6] = (namespace[6] & 0x0f) | 0x30
+        namespace[8] = (namespace[8] & 0x3f) | 0x80
+        uuid = '-'.join([
+            bytes(namespace[0:4]).hex(),
+            bytes(namespace[4:6]).hex(),
+            bytes(namespace[6:8]).hex(),
+            bytes(namespace[8:10]).hex(),
+            bytes(namespace[10:16]).hex()
+        ])
+        server.logger.debug(f"为玩家 {name} 生成离线UUID: {uuid}")
+
+    if is_white_list_enable():
+        try:
             bind_info = await wsc.get_social_account(name)
-            if bind_info["uuid"] is not None and bind_info["uuid"] != "":
-                server.execute("whitelist add " + name)
+            if bind_info and bind_info.get("uuid"):
+                server.execute(f"whitelist add {name}")
+        except Exception as e:
+            server.logger.error(f"获取玩家 {name} 绑定信息失败: {str(e)}")
+            
+    # 更新玩家UUID映射
+    player_data_map = get_data_map()
+    if "uuid_map" not in player_data_map:
+        player_data_map["uuid_map"] = {}
+    player_data_map["uuid_map"][name] = uuid
+    # 获取玩家IP，兼容不同MCDR版本
+    ip_address = '127.0.0.1'
+    if hasattr(info, 'content') and isinstance(info.content, dict):
+        ip_address = info.content.get('ip', ip_address)
+    elif hasattr(info, 'ip'):
+        ip_address = info.ip
+        
+    server.logger.info(f"玩家 {name} 已加入并缓存: UUID={uuid}, IP={ip_address}")
 
 async def on_player_death(server: PluginServerInterface, player: str, killer: str = None):
     config = get_config()
