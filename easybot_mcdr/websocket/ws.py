@@ -300,7 +300,7 @@ class EasyBotWsClient:
         info = build_player_info(player_name)
         if info is None:
             logger = ServerInterface.get_instance().logger
-            logger.warning(f"无法获取玩家 {player_name} 的信息，跳过报告")
+            logger.warning(f"无法获取 {player_name} 的玩家信息，跳过报告")
             return None
         await self._send_packet("REPORT_PLAYER", {
             "player_name": player_name,
@@ -312,8 +312,12 @@ class EasyBotWsClient:
     async def push_message(self, player_name: str, message: str, use_command:bool):
         from easybot_mcdr.api.player import build_player_info
         info = build_player_info(player_name)
-        info['player_name_raw'] = player_name
+        if info is None:
+            logger = ServerInterface.get_instance().logger
+            logger.warning(f"无法获取 {player_name} 的玩家信息，跳过消息上报")
+            return
 
+        info['player_name_raw'] = player_name
         await self._send_packet("SYNC_MESSAGE", {
             "player": info,
             "message": message,

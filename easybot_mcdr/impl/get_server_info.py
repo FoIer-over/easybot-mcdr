@@ -12,7 +12,7 @@ async def exec_get_server_info(ctx: ExecContext, data:dict, _):
     working_directory = server.get_mcdr_config()["working_directory"]
     properties_path = os.path.join(working_directory, "server.properties")
     online_mode = False
-    with open(properties_path, "r") as f:
+    with open(properties_path, "r", encoding='utf-8') as f:
         online_mode = re.search(r"online-mode=(.*)", f.read()).group(1)
         online_mode = str(online_mode).lower().strip() == "true"
     packet = {
