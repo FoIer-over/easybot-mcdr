@@ -126,7 +126,7 @@ def build_player_info(player: str):
                 "skin_url": "",
                 "bedrock": False
             }
-        logger.warning(f"玩家 {player} 未在线且无缓存数据")
+        logger.warning(f"玩家 {player} 未在线或无缓存数据")
         return None
     return {
         "player_name": player,
