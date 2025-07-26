@@ -3,7 +3,7 @@ from typing import List
 from mcdreforged.api.all import *
 import re
 import requests
-
+import hashlib
 from easybot_mcdr.impl.get_server_info import is_online_mode
 
 class PlayerInfo:
@@ -87,6 +87,43 @@ def is_bot_player(player: str) -> bool:
     """Check if player is a bot by name prefix"""
     return player.startswith(('Bot_', 'BOT_', 'bot_'))
 
+def generate_offline_uuid(player_name: str) -> str:
+    """生成离线模式UUID（符合Mojang规范）"""
+    digest = hashlib.md5(b"OfflinePlayer:" + player_name.encode('utf-8')).digest()
+    namespace = bytearray(digest)
+    # 设置版本位 (第6字节的高4位为0011)
+    namespace[6] = (namespace[6] & 0x0f) | 0x30  # Version 3
+    # 设置变体位 (第8字节的高2位为10)
+    namespace[8] = (namespace[8] & 0x3f) | 0x80  # Variant RFC 4122
+    # 转换为UUID字符串
+    return '-'.join([
+        bytes(namespace[0:4]).hex(),
+        bytes(namespace[4:6]).hex(),
+        bytes(namespace[6:8]).hex(),
+        bytes(namespace[8:10]).hex(),
+        bytes(namespace[10:16]).hex()
+    ])
+
+def update_player_uuid(player: str, new_uuid: str):
+    """更新玩家UUID并同步到所有缓存"""
+    global online_players, uuid_map, cached_data
+    
+    # 更新UUID映射
+    old_uuid = uuid_map.get(player)
+    uuid_map[player] = new_uuid
+    
+    # 更新在线玩家信息
+    if player in online_players:
+        online_players[player].uuid = new_uuid
+    
+    # 更新缓存信息
+    if player in cached_data:
+        cached_data[player].uuid = new_uuid
+    
+    logger = ServerInterface.get_instance().logger
+    if old_uuid != new_uuid:
+        logger.info(f"玩家 {player} 的UUID已更新: {old_uuid} -> {new_uuid}")
+
 def on_player_joined(server, player, info: Info):
     logger = ServerInterface.get_instance().logger
     
@@ -94,7 +131,8 @@ def on_player_joined(server, player, info: Info):
     if is_bot_player(player):
         logger.info(f"检测到假人玩家 {player}，跳过数据处理")
         return
-        
+    
+    # 统一的UUID获取逻辑
     uuid = uuid_map.get(player)
     if uuid is None:
         if is_online_mode():
@@ -103,17 +141,25 @@ def on_player_joined(server, player, info: Info):
                 response.raise_for_status()
                 id = json.loads(response.text)['id']
                 uuid = f"{id[:8]}-{id[8:12]}-{id[12:16]}-{id[16:20]}-{id[20:]}"
-                uuid_map[player] = uuid
-            except Exception:
-                uuid = "unknown"
+            except Exception as e:
+                logger.warning(f"获取玩家 {player} 正版UUID失败: {e}")
+                uuid = generate_offline_uuid(player)  # 降级到离线UUID
         else:
-            uuid = "unknown"
+            uuid = generate_offline_uuid(player)  # 离线模式直接生成UUID
+        
+        # 更新UUID映射
+        update_player_uuid(player, uuid)
+    
+    # 获取IP地址
     ip = "127.0.0.1"
     if match := re.search(r'\d+\.\d+\.\d+\.\d+', info.raw_content):
         ip = match.group()
+    
     player_info = PlayerInfo(ip, player, uuid)
     online_players[player] = player_info
     cached_data[player] = player_info
+    
+    logger.info(f"玩家 {player} 加入成功: UUID={uuid}, IP={ip}")
 
 def build_player_info(player: str):
     logger = ServerInterface.get_instance().logger
