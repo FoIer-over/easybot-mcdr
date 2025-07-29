@@ -14,7 +14,8 @@ async def exec_bind_success_notify(ctx: ExecContext, data:dict, _):
     logger.info(message)
 
     if get_config()["events"]["bind_success"]["add_whitelist"] and is_white_list_enable():
-        ServerInterface().get_instance().execute("whitelist add " + player_name)
+        logger.info(f"尝试添加玩家 {player_name} 到白名单")
+        ServerInterface.get_instance().execute("whitelist add " + player_name)
 
     ServerInterface.get_instance().tell(player_name, message)
     if get_config()["events"]["bind_success"]["exec_command"]:

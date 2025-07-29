@@ -108,6 +108,7 @@ async def on_load(server: PluginServerInterface, prev_module):
         else:
             server.logger.info("未找到缓存文件，初始化空玩家数据")
             init_player_api(server, None)
+            server.logger.info("玩家数据加载完成")
         
         server.logger.info("初始化WebSocket连接...")
         await load()

@@ -23,8 +23,11 @@ async def exec_un_bind_notify(ctx: ExecContext, data: dict, _):
     if not get_config()["events"]["un_bind"]["kick"]:
         return
     
-    if get_config()["events"]["un_bind"]["remove_whitelist"] and is_white_list_enable():
-        ServerInterface().get_instance().execute("whitelist remove " + player_name)
+    if get_config()["events"]["un_bind"]["remove_white_list"] and is_white_list_enable():
+        try:
+            ServerInterface.get_instance().execute("whitelist remove " + player_name)
+        except Exception as e:
+            logger.error(f"移除白名单失败: {e}")
 
     from easybot_mcdr.main import push_kick
-    push_kick(player_name, kick_message)
+    push_kick(player_name, "您已从聊群或管理平台解除账户绑定")

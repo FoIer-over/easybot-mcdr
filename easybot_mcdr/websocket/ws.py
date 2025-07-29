@@ -64,8 +64,9 @@ class EasyBotWsClient:
             return func
         return decorator
 
-    def __init__(self, url):
+    def __init__(self, url, mcdr_server=None):
             self.ws_url = url
+            self.mcdr_server = mcdr_server
             self._conn_lock = asyncio.Lock()
             self._ws = None
             self._active = False
