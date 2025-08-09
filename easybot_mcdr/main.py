@@ -619,6 +619,8 @@ async def on_player_joined(server: PluginServerInterface, player: str, info: Inf
         server.logger.info(f"玩家 {player} 已加入并缓存: UUID={player_info['player_uuid']}, IP={player_info['ip']}")
         res = await wsc.login(player)
         if res["kick"]:
+            server.logger.info(f"检测到玩家 {player} 需要被踢出，延迟5秒执行...")
+            await asyncio.sleep(5) 
             push_kick(player, res["kick_message"])
             return
         await wsc.push_enter(player)
