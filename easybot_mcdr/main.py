@@ -633,7 +633,7 @@ async def on_info(server, info: Info):
     
     # 正版UUID处理
     if match := re.search(
-        r"UUID of player (\w+) is ([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})",
+        r"UUID of player ([\w.]+) is ([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})",
         raw,
     ):
         name = match.group(1)
@@ -647,7 +647,7 @@ async def on_info(server, info: Info):
         return
     
     # 玩家加入消息处理（用于离线模式UUID同步验证）
-    if match := re.search(r"(\w+) joined the game", raw):
+    if match := re.search(r"([\w.]+) joined the game", raw):
         name = match.group(1)
         
         if is_bot_player(name):
