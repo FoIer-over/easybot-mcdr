@@ -6,16 +6,19 @@ from easybot_mcdr.utils import is_white_list_enable
 from easybot_mcdr.websocket.ws import EasyBotWsClient
 from easybot_mcdr.impl.get_server_info import is_online_mode  # 添加这行导入
 import easybot_mcdr.impl.cross_server_chat
+from easybot_mcdr.impl.prefix_handler import PrefixNameHandler
 import re
 import json
 import os
 import asyncio
+import time
 
 wsc: EasyBotWsClient = None
 player_data_map = {}
 rcon_initialized = False  # 添加RCON连接状态标志
-
-help_msg = '''--------§a EasyBot V1.1.2§r--------
+exit_reported_at = {} 
+debounce_time = 5 
+help_msg = '''--------§a EasyBot §r--------
 §b!!ez help §f- §c显示帮助菜单
 §b!!ez reload §f- §c重载配置文件
 
@@ -27,11 +30,6 @@ help_msg = '''--------§a EasyBot V1.1.2§r--------
 §b!!ez say <message> §f- §c发送消息
 §b!!esay <message> §f- §c同上
 §b!!say <message> §f- §c同上
-
-§c跨服聊天
-§b!!ez ssay <message> §f- §c发送跨服消息
-§b!!essay <message> §f- §c同上
-§b!!ssay <message> §f- §c同上
 
 §c假人过滤设置(需MCDR 3级权限及以上)
 §b!!ez bot toggle §f- §c开启/关闭假人过滤
@@ -55,6 +53,7 @@ async def on_load(server: PluginServerInterface, prev_module):
     global server_interface, wsc
     server_interface = server
     server.logger.info("开始加载EasyBot插件...")
+    server.register_server_handler(PrefixNameHandler())
 
     import threading
     uuid_check_thread = threading.Thread(target=periodic_uuid_check, daemon=True)
@@ -67,7 +66,6 @@ async def on_load(server: PluginServerInterface, prev_module):
             server.logger.info("检测到缓存文件，加载玩家数据...")
             with open("easybot_cache.json", "r") as f:
                 saved_data = json.load(f)
-            # 处理可能的列表或字典格式的online_players
             online_players = {}
             if isinstance(saved_data["online_players"], list):
                 server.logger.warning("检测到旧版列表格式的online_players，正在转换...")
@@ -102,7 +100,6 @@ async def on_load(server: PluginServerInterface, prev_module):
                 "uuid_map": saved_data["uuid_map"],
                 "cache": cache
             })
-            # Clear the file after loading
             os.remove("easybot_cache.json")
             server.logger.info("玩家数据加载完成")
         else:
@@ -123,16 +120,16 @@ async def on_load(server: PluginServerInterface, prev_module):
         server.register_event_listener('mcdr.general_info', on_info, priority=1)
         # 注册假人相关事件
         server.register_event_listener('player_death', on_player_death)
+        # 兼容不同事件名的玩家退出事件
+        server.register_event_listener('mcdr.player_left', on_player_left)
         server.register_event_listener('player_left', on_player_left)
-        server.logger.info(f"已注册事件监听器: player_death={on_player_death}, player_left={on_player_left}")
+        server.logger.info(f"已注册事件监听器: player_death={on_player_death}, mcdr.player_left={on_player_left}, player_left={on_player_left}")
         
         server.logger.info("EasyBot插件加载完成")
     except Exception as e:
         server.logger.error(f"插件加载过程中发生错误: {str(e)}")
         raise
 
-    # 移除这里的 RCON 连接逻辑，转移到 on_server_started 中
-    # 注册命令部分保持不变
     builder = SimpleCommandBuilder()
     # 定义参数
     builder.arg("message", Text)  
@@ -147,9 +144,6 @@ async def on_load(server: PluginServerInterface, prev_module):
     builder.command("!!say <message>", say)
     builder.command("!!esay <message>", say)
     builder.command("!!ez say <message>", say)
-    builder.command("!!ez ssay <message>", cross_server_say)
-    builder.command("!!essay <message>", cross_server_say)
-    builder.command("!!ssay <message>", cross_server_say)
 
     # 假人过滤命令
     builder.command("!!ez bot toggle", toggle_bot_filter)
@@ -596,7 +590,6 @@ async def list_bot_prefixes(source: CommandSource):
 
 async def on_player_joined(server: PluginServerInterface, player: str, info: Info):
     try:
-        # 导入必要的函数和类
         from easybot_mcdr.api.player import cached_data
         
         config = get_config()
@@ -627,7 +620,33 @@ async def on_player_joined(server: PluginServerInterface, player: str, info: Inf
     except Exception as e:
         server.logger.error(f"处理玩家 {player} 加入时出错: {e}")
 
-# 修复后的 on_info 函数
+# 统一的玩家退出上报函数
+async def _report_player_exit(server: PluginServerInterface, name: str):
+    # 踢出列表过滤
+    if name in kick_map:
+        server.logger.debug(f"玩家 {name} 是被踢出的，退出事件上报已跳过")
+        kick_map.remove(name)
+        return
+
+    # 假人过滤
+    if is_bot_player(name):
+        server.logger.info(f"过滤假人 {name} 的退出事件")
+        return
+
+    # 去重
+    now = time.time()
+    last = exit_reported_at.get(name, 0)
+    if now - last < debounce_time:
+        server.logger.debug(f"忽略重复退出上报: {name}")
+        return
+    exit_reported_at[name] = now
+
+    try:
+        await wsc.push_exit(name)
+        server.logger.debug(f"已上报玩家退出: {name}")
+    except Exception as e:
+        server.logger.error(f"上报玩家 {name} 退出失败: {e}")
+
 async def on_info(server, info: Info):
     raw = info.raw_content
     
@@ -640,22 +659,23 @@ async def on_info(server, info: Info):
         uuid = match.group(2).lower()
         
         if not is_bot_player(name):
-            # 导入更新函数
             from easybot_mcdr.api.player import update_player_uuid
             update_player_uuid(name, uuid)
             server.logger.info(f"从服务器获取到玩家 {name} 的正版UUID: {uuid}")
         return
     
-    # 玩家加入消息处理（用于离线模式UUID同步验证）
-    if match := re.search(r"([\w.]+) joined the game", raw):
-        name = match.group(1)
+    # 玩家加入消息处理（用于离线模式UUID同步验证，兼容含前缀名称）
+    m_join_pref = re.search(r"^\[[^\]]+\](?P<name>[\w.]+) joined the game$", raw)
+    m_join_plain = re.search(r"^(?P<name>[\w.]+) joined the game$", raw)
+    if m_join_pref or m_join_plain:
+        name = (m_join_pref or m_join_plain).group('name')
         
         if is_bot_player(name):
             server.logger.info(f"检测到假人 {name}，跳过UUID处理")
             return
         
         # 确保UUID已正确设置（双重检查）
-        from easybot_mcdr.api.player import uuid_map, generate_offline_uuid, update_player_uuid
+        from easybot_mcdr.api.player import uuid_map, generate_offline_uuid, update_player_uuid, online_players, cached_data, PlayerInfo
         
         current_uuid = uuid_map.get(name)
         if not current_uuid or current_uuid == "unknown":
@@ -665,6 +685,18 @@ async def on_info(server, info: Info):
                 update_player_uuid(name, correct_uuid)
                 server.logger.info(f"修正玩家 {name} 的离线UUID: {correct_uuid}")
         
+        # 在本地缓存玩家信息（供后续上报退出等使用）
+        try:
+            ip = "127.0.0.1"
+            if match_ip := re.search(r"\d+\.\d+\.\d+\.\d+", raw):
+                ip = match_ip.group()
+            # 若不存在则创建/更新
+            if name not in online_players:
+                online_players[name] = PlayerInfo(ip, name, uuid_map.get(name, "unknown"))
+            cached_data[name] = online_players[name]
+        except Exception as e:
+            server.logger.warning(f"写入玩家 {name} 本地缓存失败: {e}")
+
         # 白名单处理
         if is_white_list_enable():
             try:
@@ -673,6 +705,23 @@ async def on_info(server, info: Info):
                     server.execute(f"whitelist add {name}")
             except Exception as e:
                 server.logger.error(f"获取玩家 {name} 绑定信息失败: {str(e)}")
+        return
+
+    # 玩家退出消息处理（兼容含前缀名称与额外前后缀文本）
+    m_quit = re.search(r"(?:\[[^\]]+\])?(?P<name>[\w.]+) left the game", raw)
+    if m_quit:
+        name = m_quit.group('name')
+        server.logger.debug(f"检测到退出行，解析玩家: {name} | 原始: {raw}")
+        await _report_player_exit(server, name)
+        return
+
+    # 兼容 "lost connection:" 形式（有些服务端不打印 left the game）
+    m_lost = re.search(r"(?:\[[^\]]+\])?(?P<name>[\w.]+) lost connection:\s*", raw)
+    if m_lost:
+        name = m_lost.group('name')
+        server.logger.debug(f"检测到断开行，解析玩家: {name} | 原始: {raw}")
+        await _report_player_exit(server, name)
+        return
 
 # 新增：定期UUID同步检查函数
 @new_thread("UUID_Sync_Check")
@@ -723,7 +772,15 @@ async def on_player_left(server: PluginServerInterface, player: str):
     if is_bot_player(player):
         server.logger.info(f"过滤假人 {player} 的退出事件 (匹配前缀: {bot_filter['prefixes']})")
         return
-        
+    
+    # 避免与 on_info 中的解析重复上报
+    now = time.time()
+    last = exit_reported_at.get(player, 0)
+    if now - last < 2.0:
+        server.logger.debug(f"忽略重复退出上报: {player}")
+        return
+    exit_reported_at[player] = now
+
     server.logger.debug(f"正常玩家 {player} 退出事件处理")
     await wsc.push_exit(player)
 
