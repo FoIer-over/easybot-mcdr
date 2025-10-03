@@ -341,11 +341,9 @@ async def show_plugin_info(source: CommandSource):
     plugin_info = [
         '--------§a EasyBot 插件详情 §r--------',
         f'§b插件版本: §f{get_plugin_version()}',
-        '§b插件名称: §fEasyBot MCDR插件',
+        '§b插件名称: §fEasyBot MCDR',
         '§b功能介绍: §f跨服务器聊天、玩家数据同步、假人过滤',
         f'§b服务器模式: §f{'正版' if get_online_mode() else '离线'}模式',
-        '§b作者: §fEasyBot团队',
-        '§bqq群: §f961746627',
         '§b使用帮助: §f!!ez help',
         '---------------------------------------------'
     ]
