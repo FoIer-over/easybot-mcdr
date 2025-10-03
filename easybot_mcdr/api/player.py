@@ -4,7 +4,7 @@ from mcdreforged.api.all import *
 import re
 import requests
 import hashlib
-from easybot_mcdr.impl.get_server_info import is_online_mode
+from easybot_mcdr.impl.get_server_info import get_online_mode
 
 class PlayerInfo:
     ip: str
@@ -135,7 +135,7 @@ def on_player_joined(server, player, info: Info):
     # 统一的UUID获取逻辑
     uuid = uuid_map.get(player)
     if uuid is None:
-        if is_online_mode():
+        if get_online_mode():
             try:
                 response = requests.get(f"https://api.mojang.com/users/profiles/minecraft/{player}")
                 response.raise_for_status()

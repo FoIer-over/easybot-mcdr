@@ -1,10 +1,10 @@
-from easybot_mcdr.impl.get_server_info import is_online_mode
+from easybot_mcdr.impl.get_server_info import get_online_mode
 from easybot_mcdr.websocket.context import ExecContext
 from easybot_mcdr.websocket.ws import EasyBotWsClient
 from mcdreforged.api.all import *
 
 def try_get_skin(name):
-    if is_online_mode(): # 只有在线模式获取到的皮肤才是正确的
+    if get_online_mode(): # 只有在线模式获取到的皮肤才是正确的
         return f"https://mineskin.eu/download/{name}"
     # 默认尼哥
     return "https://textures.minecraft.net/texture/eee522611005acf256dbd152e992c60c0bb7978cb0f3127807700e478ad97664"

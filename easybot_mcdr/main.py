@@ -4,7 +4,7 @@ from easybot_mcdr.api.player import get_data_map, init_player_api
 from easybot_mcdr.config import get_config, load_config, save_config
 from easybot_mcdr.utils import is_white_list_enable
 from easybot_mcdr.websocket.ws import EasyBotWsClient
-from easybot_mcdr.impl.get_server_info import is_online_mode  # 添加这行导入
+from easybot_mcdr.impl.get_server_info import get_online_mode  # 添加这行导入
 import easybot_mcdr.impl.cross_server_chat
 from easybot_mcdr.impl.prefix_handler import PrefixNameHandler
 import re
@@ -18,7 +18,9 @@ player_data_map = {}
 rcon_initialized = False  # 添加RCON连接状态标志
 exit_reported_at = {} 
 debounce_time = 5 
-help_msg = '''--------§a EasyBot §r--------
+from easybot_mcdr.meta import get_plugin_version
+
+help_msg = '''--------§a EasyBot §r(版本: §e{0}§r)--------
 §b!!ez help §f- §c显示帮助菜单
 §b!!ez reload §f- §c重载配置文件
 
@@ -36,8 +38,10 @@ help_msg = '''--------§a EasyBot §r--------
 §b!!ez bot add <prefix> §f- §c添加假人过滤前缀
 §b!!ez bot remove <prefix> §f- §c移除假人过滤前缀
 §b!!ez bot list §f- §c显示假人过滤前缀列表
----------------------------------------------
-'''
+
+§c插件信息
+§b!!ez §f- §c显示插件详情
+---------------------------------------------'''.format(get_plugin_version())
 
 
 def is_bot_player(player: str) -> bool:
@@ -137,7 +141,7 @@ async def on_load(server: PluginServerInterface, prev_module):
 
     # 注册命令
     builder.command("!!ez help", show_help)
-    builder.command("!!ez", show_help)
+    builder.command("!!ez", show_plugin_info)
     builder.command("!!ez reload", reload)
     builder.command("!!ez bind", bind)
     builder.command("!!bind", bind)
@@ -329,6 +333,24 @@ async def show_help(source: CommandSource):
     for line in help_msg.splitlines():
         source.reply(line)
 
+async def show_plugin_info(source: CommandSource):
+    """显示插件详情信息"""
+    from easybot_mcdr.meta import get_plugin_version
+    from easybot_mcdr.impl.get_server_info import get_online_mode
+    
+    plugin_info = [
+        '--------§a EasyBot 插件详情 §r--------',
+        f'§b插件版本: §f{get_plugin_version()}',
+        '§b插件名称: §fEasyBot MCDR',
+        '§b功能介绍: §f跨服务器聊天、玩家数据同步、假人过滤',
+        f'§b服务器模式: §f{'正版' if get_online_mode() else '离线'}模式',
+        '§b使用帮助: §f!!ez help',
+        '---------------------------------------------'
+    ]
+    
+    for line in plugin_info:
+        source.reply(line)
+
 async def on_unload(server: PluginServerInterface):
     global player_data_map, wsc, server_interface
     
@@ -418,76 +440,7 @@ async def load():
     wsc = EnhancedWsClient(ws_config)
     server_interface.logger.info(f"WebSocket客户端初始化完成: {wsc is not None}")
 
-@new_thread("EasyBot Startup")
-def on_server_started(server: PluginServerInterface):
-    global wsc
-    server.logger.info("检测到服务器启动事件，开始WebSocket连接流程...")
-    
-    async def connect_and_report():
-        max_attempts = 5  # 增加尝试次数
-        retry_delay = 3   # 缩短重试间隔
-        
-        for attempt in range(max_attempts):
-            try:
-                server.logger.info(f"尝试WebSocket连接 (尝试 {attempt + 1}/{max_attempts})")
-                if wsc is None:
-                    server.logger.error("WebSocket客户端未初始化")
-                    return False
-                
-                # 检查是否已连接
-                if hasattr(wsc, 'is_connected') and await wsc.is_connected():
-                    server.logger.info("WebSocket已连接，无需重新连接")
-                else:
-                    server.logger.info("正在建立新连接...")
-                    if not await wsc.start():
-                        raise ConnectionError("WebSocket连接失败")
-                    server.logger.info("WebSocket连接成功")
-                
-                # 连接成功后上报服务器信息
-                server.logger.info("开始上报服务器信息...")
-                server_info = {
-                    'name': server.get_server_information().name,
-                    'version': server.get_server_information().version,
-                    'player_count': len(server.get_online_players()),
-                    'max_players': server.get_server_information().max_players,
-                    'motd': server.get_server_information().description,
-                    'port': server.get_server_information().port
-                }
-                
-                # 上报服务器信息
-                await wsc._send_packet("REPORT_SERVER_INFO", server_info)
-                server.logger.info("服务器信息上报成功")
-                
-                # 上报当前在线玩家
-                for player in server.get_online_players():
-                    try:
-                        await wsc.report_player(player)
-                        server.logger.debug(f"玩家 {player} 信息上报成功")
-                    except Exception as e:
-                        server.logger.error(f"上报玩家 {player} 信息失败: {str(e)}")
-                
-                return True
-                
-            except Exception as e:
-                server.logger.error(f"连接/上报尝试失败: {type(e).__name__}: {str(e)}")
-                if attempt < max_attempts - 1:
-                    server.logger.info(f"{retry_delay}秒后重试...")
-                    await asyncio.sleep(retry_delay)
-        
-        server.logger.error("WebSocket连接/上报失败，请检查以下内容:")
-        server.logger.error("- WebSocket服务端是否运行")
-        server.logger.error("- 配置是否正确 (地址: %s)", get_config().get("ws", {}).get("address"))
-        server.logger.error("- 网络连接是否正常")
-        return False
-    
-    if wsc is not None:
-        try:
-            asyncio.run(connect_and_report())
-        except Exception as e:
-            server.logger.error(f"连接/上报过程中发生未预期错误: {type(e).__name__}: {str(e)}")
-    else:
-        server.logger.error("无法连接: WebSocket客户端未初始化")
-        server.logger.info("建议重新加载插件以初始化客户端")
+
 
 async def bind(source: CommandSource):
     if source.is_console:
@@ -680,7 +633,7 @@ async def on_info(server, info: Info):
         current_uuid = uuid_map.get(name)
         if not current_uuid or current_uuid == "unknown":
             # 生成或修正UUID
-            if not is_online_mode():
+            if not get_online_mode():
                 correct_uuid = generate_offline_uuid(name)
                 update_player_uuid(name, correct_uuid)
                 server.logger.info(f"修正玩家 {name} 的离线UUID: {correct_uuid}")
@@ -728,13 +681,13 @@ async def on_info(server, info: Info):
 def periodic_uuid_check():
     """定期检查和修复UUID不一致问题"""
     import time
-    from easybot_mcdr.api.player import online_players, uuid_map, generate_offline_uuid, update_player_uuid, is_online_mode
+    from easybot_mcdr.api.player import online_players, uuid_map, generate_offline_uuid, update_player_uuid, get_online_mode
     
     while True:
         try:
             time.sleep(30)  # 每30秒检查一次
             
-            if not is_online_mode():
+            if not get_online_mode():
                 server = ServerInterface.get_instance()
                 for player in list(online_players.keys()):
                     current_uuid = online_players[player].uuid

@@ -36,7 +36,8 @@ async def exec_get_server_info(ctx: ExecContext, data:dict, _):
     ServerInterface.get_instance().logger.info(f"{packet['server_version']} 正版验证: {'是' if online_mode else '否'}")
     return
 
-def is_online_mode():
+def get_online_mode():
+    global is_online_mode
     return is_online_mode
 
 @new_thread("EasyBot-GetPlayers")
