@@ -76,9 +76,9 @@ class PrefixNameHandler(_handler_classes[0]):
 
         # Only try to parse when no parser recognized a player
         if info.player is None:
-            # Match like: <[AnyWord]PlayerName> Message
+            # Match like: [Not Secure] <[AnyWord]PlayerName> Message or <[AnyWord]PlayerName> Message
             # prefix group is optional capture for readability; only name+message used
-            m = re.fullmatch(r'<\[(?P<prefix>[^\]]+)\](?P<name>[^>]+)> (?P<message>.*)', info.content)
+            m = re.fullmatch(r'(?:\[Not Secure\] )?<\[(?P<prefix>[^\]]+)\](?P<name>[^>]+)> (?P<message>.*)', info.content)
             if m is not None and self._verify_player_name(m['name']):
                 info.player = m['name']
                 info.content = m['message']
