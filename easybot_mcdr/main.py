@@ -785,7 +785,8 @@ async def on_info(server, info: Info):
 def periodic_uuid_check():
     """定期检查和修复UUID不一致问题"""
     import time
-    from easybot_mcdr.api.player import online_players, uuid_map, generate_offline_uuid, update_player_uuid, get_online_mode
+    from easybot_mcdr.api.player import online_players, uuid_map, generate_offline_uuid, update_player_uuid
+    from easybot_mcdr.impl.get_server_info import get_online_mode
     
     while True:
         try:
