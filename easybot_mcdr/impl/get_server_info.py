@@ -5,6 +5,9 @@ from easybot_mcdr.websocket.context import ExecContext
 from easybot_mcdr.websocket.ws import EasyBotWsClient
 from mcdreforged.api.all import *
 
+# 初始化在线模式变量，默认为False（离线模式）
+is_online_mode = False
+
 @EasyBotWsClient.listen_exec_op("GET_SERVER_INFO")
 async def exec_get_server_info(ctx: ExecContext, data:dict, _):
     global is_online_mode
@@ -37,8 +40,34 @@ async def exec_get_server_info(ctx: ExecContext, data:dict, _):
     return
 
 def get_online_mode():
+    """
+    读取server.properties文件获取服务器在线模式设置
+    直接返回解析结果，并更新全局变量
+    """
     global is_online_mode
-    return is_online_mode
+    try:
+        server = ServerInterface.get_instance()
+        working_directory = server.get_mcdr_config()["working_directory"]
+        properties_path = os.path.join(working_directory, "server.properties")
+        
+        # 直接读取并解析文件，与exec_get_server_info中的逻辑类似
+        with open(properties_path, "r", encoding='utf-8') as f:
+            content = f.read()
+            match = re.search(r"online-mode=(.*)", content)
+            if match:
+                online_mode = str(match.group(1)).lower().strip() == "true"
+                # 更新全局变量
+                is_online_mode = online_mode
+                return online_mode
+            else:
+                server.logger.warning("在server.properties中未找到online-mode配置，默认为离线模式")
+                is_online_mode = False
+                return False
+    except Exception as e:
+        server = ServerInterface.get_instance()
+        server.logger.error(f"读取服务器在线模式时出错: {str(e)}")
+        # 出错时返回当前全局变量的值
+        return is_online_mode
 
 @new_thread("EasyBot-GetPlayers")
 def get_online_players(server: PluginServerInterface):

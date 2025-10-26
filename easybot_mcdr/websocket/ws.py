@@ -76,6 +76,7 @@ class EasyBotWsClient:
             self._manual_stop = False
             self._reconnect_base = 2  # 基础重连延迟（秒）
             self._max_reconnect_interval = 60  # 最大重连间隔（秒）
+            self._max_reconnect_attempts = 30  # 最大重连尝试次数
             self._reconnect_attempts = 0  # 重连尝试次数
             self._last_error_log_time = 0  # 上次错误日志时间
             self._session_info = None
@@ -178,20 +179,28 @@ class EasyBotWsClient:
         """连接生命周期管理器 - 使用指数退避算法"""
         while self._active:
             try:
+                # 检查是否超过最大重连次数
+                if self._reconnect_attempts > 0 and self._reconnect_attempts >= self._max_reconnect_attempts:
+                    try:
+                        server = ServerInterface.get_instance()
+                        server.logger.warning(f"[EasyBot] 已达到最大重连次数({self._max_reconnect_attempts}次)，停止重连")
+                    except:
+                        pass
+                    self._active = False
+                    break
+                    
                 # 指数退避计算，带随机抖动避免雪崩
                 jitter = 0.1 * (1 - 2 * (self._reconnect_attempts % 2))  # ±10%的抖动
                 delay = min(self._reconnect_base * (2 ** self._reconnect_attempts), 
                            self._max_reconnect_interval) * (1 + jitter)
                 
                 if self._reconnect_attempts > 0:
-                    # 只在重连时记录日志，避免连接正常时的日志
-                    if self._reconnect_attempts <= 3 or time.time() - self._last_error_log_time >= 30:
-                        try:
-                            server = ServerInterface.get_instance()
-                            server.logger.info(f"[EasyBot] {delay:.1f}秒后尝试重连 (第{self._reconnect_attempts}次)")
-                            self._last_error_log_time = time.time()
-                        except:
-                            pass
+                    try:
+                        server = ServerInterface.get_instance()
+                        server.logger.info(f"[EasyBot] {delay:.1f}秒后尝试重连 (第{self._reconnect_attempts}次/共{self._max_reconnect_attempts}次)")
+                        self._last_error_log_time = time.time()
+                    except:
+                        pass
                     await asyncio.sleep(delay)
                 
                 async with websockets.connect(self.ws_url) as websocket:
@@ -202,34 +211,32 @@ class EasyBotWsClient:
                         await self.on_open()
                         await self._message_pump()
                     except Exception as inner_error:
-                        # 连接过程中的错误，不增加重连计数
-                        if time.time() - self._last_error_log_time >= 30:
-                            try:
-                                server = ServerInterface.get_instance()
-                                server.logger.warning(f"[EasyBot] 连接中错误: {type(inner_error).__name__}")
-                                self._last_error_log_time = time.time()
-                            except:
-                                pass
+                        # 连接过程中的错误，不增加重连计数，每次都记录日志
+                        try:
+                            server = ServerInterface.get_instance()
+                            server.logger.warning(f"[EasyBot] 连接中错误: {type(inner_error).__name__}")
+                            # 即使记录日志也更新时间戳，保持一致性
+                            self._last_error_log_time = time.time()
+                        except:
+                            pass
                     
             except (ConnectionRefusedError, ConnectionClosedError):
                 self._reconnect_attempts += 1
-                # 连接错误使用简化的日志，避免过多详细信息
-                if self._reconnect_attempts <= 3 or time.time() - self._last_error_log_time >= 30:
-                    try:
-                        server = ServerInterface.get_instance()
-                        server.logger.warning(f"[EasyBot] 连接失败 (第{self._reconnect_attempts}次)")
-                        self._last_error_log_time = time.time()
-                    except:
-                        pass
+                # 连接错误，每次都记录日志
+                try:
+                    server = ServerInterface.get_instance()
+                    server.logger.warning(f"[EasyBot] 连接失败 (第{self._reconnect_attempts}次/共{self._max_reconnect_attempts}次)")
+                    self._last_error_log_time = time.time()
+                except:
+                    pass
             except Exception as e:
-                # 非连接错误
-                if time.time() - self._last_error_log_time >= 30:
-                    try:
-                        server = ServerInterface.get_instance()
-                        server.logger.warning(f"[EasyBot] 发生错误: {type(e).__name__}")
-                        self._last_error_log_time = time.time()
-                    except:
-                        pass
+                # 非连接错误，每次都记录日志
+                try:
+                    server = ServerInterface.get_instance()
+                    server.logger.warning(f"[EasyBot] 发生错误: {type(e).__name__}")
+                    self._last_error_log_time = time.time()
+                except:
+                    pass
                 await asyncio.sleep(1)
 
         await self._cleanup_connection()
