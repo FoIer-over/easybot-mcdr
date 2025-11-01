@@ -1,8 +1,10 @@
 import asyncio
 from collections import defaultdict
 import json
+import time
 from types import SimpleNamespace
 import websockets
+from typing import Optional, Dict, Any, Callable, List
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 from mcdreforged.api.all import *
 from easybot_mcdr.config import get_config
@@ -65,19 +67,27 @@ class EasyBotWsClient:
         return decorator
 
     def __init__(self, url, mcdr_server=None):
-            self.ws_url = url
+            # 确保url是字符串格式
+            self.ws_url = str(url) if url is not None else ""
             self.mcdr_server = mcdr_server
             self._conn_lock = asyncio.Lock()
             self._ws = None
             self._active = False
             self._manual_stop = False
-            self._reconnect_base = 1
-            self._max_reconnect_interval = 30
+            self._reconnect_base = 2  # 基础重连延迟（秒）
+            self._max_reconnect_interval = 60  # 最大重连间隔（秒）
+            self._max_reconnect_attempts = 30  # 最大重连尝试次数
+            self._reconnect_attempts = 0  # 重连尝试次数
+            self._last_error_log_time = 0  # 上次错误日志时间
             self._session_info = None
             self._heartbeat_task = None
             self._connection_task = None
             self._pending_requests = {}
             self._request_counter = 0
+            
+    async def is_connected(self):
+            """检查WebSocket是否已连接"""
+            return hasattr(self, '_ws') and self._ws is not None and hasattr(self._ws, 'state') and self._ws.state is websockets.State.OPEN
     async def send_and_wait(self, exec_op: str, data: dict, timeout: float = 10.0) -> dict:
             """
             发送请求并等待响应
@@ -166,27 +176,68 @@ class EasyBotWsClient:
 
             self._heartbeat_task = asyncio.create_task(heartbeat_loop())
     async def _connection_manager(self):
-        """连接生命周期管理器"""
-        reconnect_attempts = 0
+        """连接生命周期管理器 - 使用指数退避算法"""
         while self._active:
             try:
-                # 指数退避计算
-                delay = min(self._reconnect_base * (2 ** reconnect_attempts), 
-                           self._max_reconnect_interval)
-                await asyncio.sleep(delay)
+                # 检查是否超过最大重连次数
+                if self._reconnect_attempts > 0 and self._reconnect_attempts >= self._max_reconnect_attempts:
+                    try:
+                        server = ServerInterface.get_instance()
+                        server.logger.warning(f"[EasyBot] 已达到最大重连次数({self._max_reconnect_attempts}次)，停止重连")
+                    except:
+                        pass
+                    self._active = False
+                    break
+                    
+                # 指数退避计算，带随机抖动避免雪崩
+                jitter = 0.1 * (1 - 2 * (self._reconnect_attempts % 2))  # ±10%的抖动
+                delay = min(self._reconnect_base * (2 ** self._reconnect_attempts), 
+                           self._max_reconnect_interval) * (1 + jitter)
+                
+                if self._reconnect_attempts > 0:
+                    try:
+                        server = ServerInterface.get_instance()
+                        server.logger.info(f"[EasyBot] {delay:.1f}秒后尝试重连 (第{self._reconnect_attempts}次/共{self._max_reconnect_attempts}次)")
+                        self._last_error_log_time = time.time()
+                    except:
+                        pass
+                    await asyncio.sleep(delay)
                 
                 async with websockets.connect(self.ws_url) as websocket:
                     self._ws = websocket
-                    reconnect_attempts = 0  # 重置重连计数器
-                    await self.on_open()
-                    await self._message_pump()
+                    self._reconnect_attempts = 0  # 重置重连计数器
+                    self._last_error_log_time = 0  # 重置日志时间
+                    try:
+                        await self.on_open()
+                        await self._message_pump()
+                    except Exception as inner_error:
+                        # 连接过程中的错误，不增加重连计数，每次都记录日志
+                        try:
+                            server = ServerInterface.get_instance()
+                            server.logger.warning(f"[EasyBot] 连接中错误: {type(inner_error).__name__}")
+                            # 即使记录日志也更新时间戳，保持一致性
+                            self._last_error_log_time = time.time()
+                        except:
+                            pass
                     
-            except (ConnectionRefusedError, ConnectionClosedError) as e:
-                reconnect_attempts += 1
-                await self.on_error(f"Connection error: {e} (Attempt {reconnect_attempts})")
+            except (ConnectionRefusedError, ConnectionClosedError):
+                self._reconnect_attempts += 1
+                # 连接错误，每次都记录日志
+                try:
+                    server = ServerInterface.get_instance()
+                    server.logger.warning(f"[EasyBot] 连接失败 (第{self._reconnect_attempts}次/共{self._max_reconnect_attempts}次)")
+                    self._last_error_log_time = time.time()
+                except:
+                    pass
             except Exception as e:
-                await self.on_error(f"Unexpected error: {e}")
-                await asyncio.sleep(1)  # 非连接错误短暂等待
+                # 非连接错误，每次都记录日志
+                try:
+                    server = ServerInterface.get_instance()
+                    server.logger.warning(f"[EasyBot] 发生错误: {type(e).__name__}")
+                    self._last_error_log_time = time.time()
+                except:
+                    pass
+                await asyncio.sleep(1)
 
         await self._cleanup_connection()
 
@@ -217,67 +268,84 @@ class EasyBotWsClient:
             raise ConnectionError("当前WebSocket客户端不在线,插件可能还未连接到EasyBot服务!")
         
         if get_config()["debug"]:
-            logger = ServerInterface.get_instance().logger
-            logger.info(f"发送: {message}")
+            try:
+                server = ServerInterface.get_instance()
+                server.logger.info(f"[EasyBot] 发送: {message}")
+            except:
+                pass
 
         await self._ws.send(message)
 
     # 需要实现的生命周期回调
     async def on_open(self):
-        ServerInterface.get_instance().logger.info("已与主程序建立连接。")
+        try:
+            server = ServerInterface.get_instance()
+            server.logger.info("[EasyBot] 已与主程序建立连接")
+        except:
+            pass
 
     async def on_message(self, message):
-        logger = ServerInterface.get_instance().logger
-        if get_config()["debug"]:
-            logger.info(f"收到: {message}")
-        data = json.loads(message)
-        op = data["op"]
-        if op == 0:
-            self._session_info = SessionInfo.from_dict(data)
-            info: SessionInfo = self._session_info
-            logger.info(f"目标核心版本: {info.get_version()}-{info.get_system()} [{info.get_dotnet()}] 心跳{info.get_interval()}s 会话ID: {info.get_session_id()}")
-            logger.info(f"准备发送鉴权,本服令牌: {get_config()['token']}")
-            await self.send(json.dumps({
-                "op": 1,
-                "token": get_config()["token"],
-                "plugin_version": get_plugin_version(),
-                "server_description": f"MCDR_{ServerInterface.get_instance().get_server_information().version}",
-            }))
-        elif op == 3:
-          self._session_info.set_server_name(
-              data["server_name"]
-          )
-          logger.info(f"身份验证成功,已经成功连接到EasyBot。 [{data['server_name']}]")
-            # 启动心跳
-          if self._session_info is not None:
-                interval = self._session_info.get_interval()
-                await self._start_heartbeat(interval)
-        elif op == 4:
-            exec_op = data.get("exec_op")
-            if exec_op in self._listeners:
-                ctx = ExecContext(data["callback_id"], data["exec_op"], self)
-                for handler in self._listeners[exec_op]:
-                    try:
-                        # 自动处理同步/异步函数
-                        if asyncio.iscoroutinefunction(handler):
-                            await handler(ctx, data, self._session_info)
-                        else:
-                            handler(ctx, data, self._session_info)
-                    except Exception as e:
-                        logger.error(f"处理 exec_op={exec_op} 时出错: {str(e)}")
-        elif op == 5:  # 新增：处理服务器响应
-            callback_id = data.get("callback_id")
-            if callback_id and callback_id in self._pending_requests:
-                future = self._pending_requests.pop(callback_id)
-                # 去除 op 字段后作为结果返回
-                result = data.copy()
-                result.pop("op", None)
-                future.set_result(result)
+        try:
+            server = ServerInterface.get_instance()
+            if get_config()["debug"]:
+                server.logger.info(f"[EasyBot] 收到: {message}")
+            data = json.loads(message)
+            op = data["op"]
+            if op == 0:
+                self._session_info = SessionInfo.from_dict(data)
+                info: SessionInfo = self._session_info
+                server.logger.info(f"[EasyBot] 目标核心版本: {info.get_version()}-{info.get_system()} [{info.get_dotnet()}] 心跳{info.get_interval()}s 会话ID: {info.get_session_id()}")
+                server.logger.info(f"[EasyBot] 准备发送鉴权")
+                await self.send(json.dumps({
+                    "op": 1,
+                    "token": get_config()["token"],
+                    "plugin_version": get_plugin_version(),
+                    "server_description": f"MCDR_{ServerInterface.get_instance().get_server_information().version}",
+                }))
+            elif op == 3:
+              self._session_info.set_server_name(
+                  data["server_name"]
+              )
+              server.logger.info(f"[EasyBot] 身份验证成功,已经成功连接到EasyBot。 [{data['server_name']}]")
+                # 启动心跳
+              if self._session_info is not None:
+                    interval = self._session_info.get_interval()
+                    await self._start_heartbeat(interval)
+            elif op == 4:
+                exec_op = data.get("exec_op")
+                if exec_op in self._listeners:
+                    ctx = ExecContext(data["callback_id"], data["exec_op"], self)
+                    for handler in self._listeners[exec_op]:
+                        try:
+                            # 自动处理同步/异步函数
+                            if asyncio.iscoroutinefunction(handler):
+                                await handler(ctx, data, self._session_info)
+                            else:
+                                handler(ctx, data, self._session_info)
+                        except Exception as e:
+                            server.logger.error(f"[EasyBot] 处理 exec_op={exec_op} 时出错: {str(e)}")
+                            
+        except Exception as e:
+            try:
+                server = ServerInterface.get_instance()
+                server.logger.error(f"[EasyBot] 处理消息时出错: {str(e)}")
+            except:
+                pass
+
     async def on_close(self, code, reason):
-        ServerInterface.get_instance().logger.info(f"连接关闭: {code} {reason}")
+        try:
+            server = ServerInterface.get_instance()
+            server.logger.info(f"[EasyBot] 连接关闭: {code} {reason}")
+        except:
+            pass
 
     async def on_error(self, error):
-        ServerInterface.get_instance().logger.error(f"遇到错误: {error}")
+        try:
+            server = ServerInterface.get_instance()
+            server.logger.warning(f"[EasyBot] WebSocket错误: {error}")
+        except:
+            # 静默失败，避免日志系统本身的错误
+            pass
 
     async def _send_packet(self, exec_op:str, data:dict):
         if self._active:
@@ -300,8 +368,11 @@ class EasyBotWsClient:
         from easybot_mcdr.api.player import build_player_info
         info = build_player_info(player_name)
         if info is None:
-            logger = ServerInterface.get_instance().logger
-            logger.warning(f"无法获取 {player_name} 的玩家信息，跳过报告")
+            try:
+                server = ServerInterface.get_instance()
+                server.logger.warning(f"[EasyBot] 无法获取 {player_name} 的玩家信息，跳过报告")
+            except:
+                pass
             return None
         await self._send_packet("REPORT_PLAYER", {
             "player_name": player_name,
