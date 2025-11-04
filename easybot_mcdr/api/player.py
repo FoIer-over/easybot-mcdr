@@ -78,9 +78,9 @@ def on_server_stop(server, return_code):
     global online_players
     global uuid_map
     global cached_data
-    online_players = []
+    online_players = {}
     uuid_map = {}
-    cached_data = []
+    cached_data = {}
 
 
 def is_bot_player(player: str) -> bool:
