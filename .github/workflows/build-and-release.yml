@@ -12,6 +12,10 @@ on:
         required: false
         default: ''
 
+permissions:
+  contents: write
+  # 授予创建和更新Release所需的权限
+
 jobs:
   build:
     runs-on: ubuntu-latest
