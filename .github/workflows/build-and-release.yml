@@ -34,7 +34,7 @@ jobs:
         run: pip install mcdreforged>=2.14
 
       - name: 使用MCDReforged打包插件
-        run: mcdreforged pack .
+        run: mcdreforged pack
 
       - name: 获取版本号
         id: get_version
