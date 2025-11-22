@@ -63,16 +63,24 @@ jobs:
             ${{ env.MCDR_PATH }}
 
       - name: 发布到GitHub Release
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ env.MCDR_PATH }}
+          # 如果是标签推送，使用标签作为版本号
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref || format('v{0}', env.VERSION) }}
           name: EasyBot-MCDR ${{ env.VERSION || 'Development Build' }}
           body: |
+            ## EasyBot-MCDR ${{ env.VERSION || 'Development Build' }}
+            
+            ### 版本信息
+            - 插件版本: ${{ env.VERSION || 'Development Build' }}
+            - MCDReforged: >= 2.14
+            
             ### 更新内容
           draft: false
-          prerelease: contains('${{ env.VERSION }}', 'beta') || contains('${{ env.VERSION }}', 'alpha') || contains('${{ env.VERSION }}', 'release')
+          prerelease: contains('${{ env.VERSION }}', 'beta') || contains('${{ env.VERSION }}', 'alpha')
           generate_release_notes: true
+          files: |
+            ${{ env.MCDR_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
